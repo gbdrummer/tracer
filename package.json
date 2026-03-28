@@ -1,0 +1,17 @@
+{
+  "name": "tracer",
+  "version": "0.0.1-alpha.1",
+  "description": "A deterministic signals library exploring predictable reactive state and dependency flows.",
+  "license": "MIT",
+  "author": "Graham Butler",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "smoke": "node ./test/smoke-tests.node.js",
+    "stress": "TRACER_STRESS=1 node ./test/smoke-tests.node.js",
+    "test": "node ./test/smoke-tests.node.js"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "tracer-history",
+  "version": "0.0.1-alpha.1",
+  "description": "Generic patch-based history tracker.",
+  "homepage": "https://github.com/author/author-history#readme",
+  "bugs": {
+    "url": "https://github.com/author/author-history/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/author/author-history.git"
+  },
+  "license": "UNLICENSED",
+  "author": "Graham Butler",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}

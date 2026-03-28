@@ -1,0 +1,1 @@
+export const SIGNAL_BRAND = Symbol.for('tracer.TracerSignal')
