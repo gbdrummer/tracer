@@ -1,5 +1,477 @@
 # tracer
 
+Deterministic signals and reactive collections for JavaScript.
+
+`tracer` gives you small, explicit primitives for storing values, deriving values, subscribing to changes, batching updates, and working with patch-producing collections.
+
+## Installation / Import
+
+This package is ESM-only.
+
+```js
+import { signal, batch, overridable } from 'tracer'
+```
+## Quick start
+
+```js
+import { signal } from 'tracer'
+
+const count = signal(0)
+
+const unsubscribe = count.subscribe(change => {
+  console.log(change.kind, change.nextValue)
+})
+
+count.setValue(1)
+count.setValue(value => value + 1)
+
+unsubscribe()
+```
+
+A stored signal exposes:
+
+- **`getValue()`**: reads the current value
+- **`setValue(nextOrUpdater)`**: updates the value and returns `true` if it changed
+- **`subscribe(cb)`**: subscribes to changes and returns an unsubscribe function
+
+Subscribers are called immediately with an `init` change.
+
+```js
+{
+  kind: 'init' | 'update',
+  nextValue: any,
+  previousValue: any,
+  meta?: any
+}
+```
+
+## Derived signals
+
+Pass a function to `signal()` to create a readonly derived signal.
+
+```js
+const firstName = signal('Ada')
+const lastName = signal('Lovelace')
+
+const fullName = signal($ => `${$(firstName)} ${$(lastName)}`)
+
+fullName.getValue() // 'Ada Lovelace'
+```
+
+The `$` function tracks dependencies. A derived signal only depends on signals you explicitly pass to `$`.
+
+```js
+const useNickname = signal(false)
+const name = signal('Ada')
+const nickname = signal('Enchantress of Numbers')
+
+const displayName = signal($ => {
+  return $(useNickname) ? $(nickname) : $(name)
+})
+```
+
+Derived signals expose:
+
+- **`getValue()`**
+- **`subscribe(cb)`**
+
+They do not expose `setValue()`.
+
+## Batching updates
+
+Use `batch(fn)` to coalesce multiple updates into one notification per affected signal.
+
+```js
+const count = signal(0)
+
+count.subscribe(change => {
+  if (change.kind === 'init') return
+  console.log(change.previousValue, change.nextValue)
+})
+
+batch(() => {
+  count.setValue(1)
+  count.setValue(2)
+  count.setValue(3)
+})
+
+// Logs once:
+// 0 3
+```
+
+## Reactive arrays
+
+Use `signal.array(initialArray)` for an array signal with explicit mutation APIs.
+
+```js
+const items = signal.array(['a', 'b'])
+
+items.getValue() // frozen ['a', 'b']
+
+items.index.length.subscribe(change => {
+  if (change.kind === 'init') return
+  console.log('length:', change.nextValue)
+})
+
+items.mutate(array => {
+  array.push('c')
+  array.set(0, 'A')
+})
+```
+
+Array signals expose:
+
+- **`getValue()`**
+- **`setValue(nextArrayOrUpdater)`**
+- **`mutate(fn)`**
+- **`index.length`**: signal of the array length
+
+Array mutators:
+
+- **`push(...items)`**
+- **`pop()`**
+- **`unshift(...items)`**
+- **`shift()`**
+- **`splice(start, deleteCount, ...items)`**
+- **`set(index, value)`**
+
+## Derived arrays
+
+Pass a function to `signal.array()` to create a readonly derived array signal.
+
+```js
+const first = signal('Ada')
+const second = signal('Grace')
+
+const names = signal.array($ => [
+  $(first),
+  $(second)
+])
+
+names.getValue() // frozen ['Ada', 'Grace']
+names.index.length.getValue() // 2
+```
+
+Derived arrays expose:
+
+- **`getValue()`**
+- **`subscribe(cb)`**
+- **`index.length`**
+
+They do not expose `setValue()` or `mutate()`.
+
+## Reactive objects
+
+Use `signal.object(initialObject)` for a plain-object signal.
+
+```js
+const person = signal.object({
+  name: 'Ada',
+  age: 36
+})
+
+person.mutate(object => {
+  object.set('name', 'Grace')
+  object.assign({ role: 'programmer' })
+})
+```
+
+Object signals expose:
+
+- **`getValue()`**
+- **`setValue(nextObjectOrUpdater)`**
+- **`mutate(fn)`**
+- **`index.keys`**: signal of ordered object keys
+- **`index.size`**: signal of key count
+
+Object mutators:
+
+- **`has(key)`**
+- **`get(key)`**
+- **`set(key, value)`**
+- **`delete(key)`**
+- **`assign(partial)`**
+
+## Derived objects
+
+Pass a function to `signal.object()` to create a readonly derived object signal.
+
+```js
+const name = signal('Graham')
+const age = signal(41)
+
+const person = signal.object($ => ({
+  name: $(name),
+  age: $(age)
+}))
+
+person.getValue() // frozen { name: 'Graham', age: 41 }
+person.index.keys.getValue() // frozen ['name', 'age']
+person.index.size.getValue() // 2
+```
+
+Derived objects expose:
+
+- **`getValue()`**
+- **`subscribe(cb)`**
+- **`index.keys`**
+- **`index.size`**
+
+They do not expose `setValue()` or `mutate()`.
+
+## Reactive maps
+
+Use `signal.map(initialEntries?)` for a reactive `Map`-like signal.
+
+```js
+const users = signal.map([
+  ['ada', { name: 'Ada' }]
+])
+
+users.has('ada') // true
+users.get('ada') // { name: 'Ada' }
+users.size // 1
+
+users.mutate(map => {
+  map.set('grace', { name: 'Grace' })
+})
+```
+
+Map signals expose:
+
+- **`getValue()`**: readonly map view
+- **`setValue(nextMapOrEntriesOrUpdater)`**
+- **`mutate(fn)`**
+- **`has(key)`**
+- **`get(key)`**
+- **`size`**
+- **`index.keys`**: signal of ordered keys
+- **`index.size`**: signal of map size
+- **`key(k)`**: stable signal for one key
+
+`key(k)` emits objects shaped like:
+
+```js
+{ present: boolean, value: any }
+```
+
+```js
+const ada = users.key('ada')
+
+ada.subscribe(change => {
+  console.log(change.nextValue.present, change.nextValue.value)
+})
+```
+
+Map mutators:
+
+- **`has(key)`**
+- **`get(key)`**
+- **`set(key, value)`**
+- **`delete(key)`**
+- **`clear()`**
+- **`keys()`**
+- **`values()`**
+- **`entries()`**
+
+## Derived maps
+
+Pass a function to `signal.map()` to create a readonly derived map signal.
+
+```js
+const name = signal('Graham')
+const age = signal(41)
+
+const person = signal.map($ => [
+  ['name', $(name)],
+  ['age', $(age)]
+])
+
+person.get('name') // 'Graham'
+person.size // 2
+person.index.keys.getValue() // frozen ['name', 'age']
+```
+
+Derived maps expose:
+
+- **`getValue()`**
+- **`subscribe(cb)`**
+- **`has(key)`**
+- **`get(key)`**
+- **`size`**
+- **`index.keys`**
+- **`index.size`**
+- **`key(k)`**
+
+They do not expose `setValue()` or `mutate()`.
+
+## Reactive sets
+
+Use `signal.set(initialValues?)` for a reactive `Set`-like signal.
+
+```js
+const selectedIds = signal.set(['a'])
+
+selectedIds.has('a') // true
+selectedIds.size // 1
+
+selectedIds.mutate(set => {
+  set.add('b')
+  set.delete('a')
+})
+```
+
+Set signals expose:
+
+- **`getValue()`**: readonly set view
+- **`setValue(nextSetOrValuesOrUpdater)`**
+- **`mutate(fn)`**
+- **`has(value)`**
+- **`size`**
+- **`index.values`**: signal of ordered set values
+- **`index.size`**: signal of set size
+- **`value(v)`**: stable signal for one value's membership
+
+`value(v)` emits objects shaped like:
+
+```js
+{ present: boolean }
+```
+
+Set mutators:
+
+- **`has(value)`**
+- **`add(value)`**
+- **`delete(value)`**
+- **`clear()`**
+- **`keys()`**
+- **`values()`**
+- **`entries()`**
+
+## Derived sets
+
+Pass a function to `signal.set()` to create a readonly derived set signal.
+
+```js
+const first = signal('Ada')
+const second = signal('Grace')
+
+const names = signal.set($ => [
+  $(first),
+  $(second)
+])
+
+names.has('Ada') // true
+names.size // 2
+names.index.values.getValue() // frozen ['Ada', 'Grace']
+```
+
+Derived sets expose:
+
+- **`getValue()`**
+- **`subscribe(cb)`**
+- **`has(value)`**
+- **`size`**
+- **`index.values`**
+- **`index.size`**
+- **`value(v)`**
+
+They do not expose `setValue()` or `mutate()`.
+
+## Collection patches
+
+Stored collections publish patch bundles when they change.
+
+```js
+const state = signal.object({ name: 'Ada' })
+
+const bundle = state.mutate(object => {
+  object.set('name', 'Grace')
+})
+
+console.log(bundle)
+```
+
+A patch bundle contains:
+
+```js
+{
+  patches: Patch[],
+  inversePatches: Patch[]
+}
+```
+
+The same bundle is also available as `change.meta` for subscribers.
+
+```js
+state.subscribe(change => {
+  if (change.kind === 'init') return
+  console.log(change.meta.patches)
+  console.log(change.meta.inversePatches)
+})
+```
+
+Patch bundles are frozen and can be used for undo/redo, persistence, debugging, or synchronization.
+
+## Overridable signals
+
+`overridable(baseSignal)` creates a signal wrapper that follows another signal until you explicitly override it.
+
+```js
+const serverValue = signal('light')
+const localValue = overridable(serverValue)
+
+localValue.getValue() // 'light'
+
+localValue.setValue('dark')
+localValue.getValue() // 'dark'
+localValue.isOverridden // true
+
+localValue.clear()
+localValue.getValue() // follows serverValue again
+```
+
+Overridable signals expose:
+
+- **`getValue()`**
+- **`setValue(nextOrUpdater)`**
+- **`clear()`**
+- **`isOverridden`**
+- **`subscribe(cb)`**
+
+## API summary
+
+```js
+signal(value)
+signal($ => value)
+
+signal.array(array)
+signal.array($ => array)
+
+signal.object(object)
+signal.object($ => object)
+
+signal.map(entriesOrMap?)
+signal.map($ => entriesOrMap)
+
+signal.set(valuesOrSet?)
+signal.set($ => valuesOrSet)
+
+batch(fn)
+overridable(signal)
+```
+
+## Notes
+
+- Derived signals and derived collections are readonly.
+- Collection signals use explicit mutation APIs instead of proxies.
+- Collection values and patch bundles are frozen.
+- `subscribe(cb)` always sends an initial `init` change.
+- `setValue()` returns `false` when the value does not change.
+
+<!-- 
+# tracer
+
 Deterministic signals + reactive collections with patch bundles.
 
 This is a small signals kernel designed for **transparent semantics** and **deterministic behavior**:
@@ -321,3 +793,4 @@ history.undo()
 - **No proxies / diffing**: collections mutate through explicit APIs.
 - **Patch-first design**: mutation bundles are immutable, undo-friendly, and batch-composable.
 - **History-ready**: patches + inverse patches are first-class, designed to integrate with `tracer-history`.
+ -->
