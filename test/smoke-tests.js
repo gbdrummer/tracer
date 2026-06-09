@@ -954,6 +954,79 @@ export function runSmokeTests () {
     assertEqual(calls[0], 3, 'length should be updated')
   })
 
+  test('derived array: recomputes from tracked dependencies and is readonly', () => {
+    const first = signal('Graham')
+    const second = signal('Ada')
+
+    const names = signal.array(track => [track(first), track(second)])
+
+    assertEqual(names.getValue()[0], 'Graham', 'derived array should expose initial first value')
+    assertEqual(names.getValue()[1], 'Ada', 'derived array should expose initial second value')
+    assertEqual(names.setValue, undefined, 'derived array should not expose setValue')
+    assertEqual(names.mutate, undefined, 'derived array should not expose mutate')
+
+    const calls = []
+    const unsubscribe = names.subscribe(change => {
+      if (change.kind === 'init') return
+      calls.push(change.nextValue)
+    })
+
+    first.setValue('Grace')
+
+    assertEqual(calls.length, 1, 'derived array should notify when a dependency changes')
+    assertEqual(calls[0][0], 'Grace', 'derived array should recompute changed element')
+    assertEqual(calls[0][1], 'Ada', 'derived array should preserve other computed elements')
+
+    unsubscribe()
+  })
+
+  test('derived array: index length derives from computed value', () => {
+    const includeSecond = signal(false)
+    const first = signal('Graham')
+    const second = signal('Ada')
+
+    const names = signal.array(track => {
+      const out = [track(first)]
+      if (track(includeSecond)) out.push(track(second))
+      return out
+    })
+
+    const lengthCalls = []
+
+    names.index.length.subscribe(change => {
+      if (change.kind === 'init') return
+      lengthCalls.push(change.nextValue)
+    })
+
+    first.setValue('Grace')
+    assertEqual(lengthCalls.length, 0, 'derived array length index should not notify when length is unchanged')
+
+    includeSecond.setValue(true)
+    assertEqual(lengthCalls.length, 1, 'derived array length index should notify when length changes')
+    assertEqual(lengthCalls[0], 2, 'derived array length index should update')
+  })
+
+  test('derived array: validates computed value', () => {
+    const bad = signal.array(() => null)
+
+    assertThrows(() => bad.getValue(), /expects value to be an array/, 'derived array should reject non-array computed values')
+  })
+
+  test('derived array: cold reads do not hold upstream subscriptions', () => {
+    const source = createSpySignal('Graham')
+    const names = signal.array(track => [track(source)])
+
+    assertEqual(source.activeSubscriberCount, 0, 'derived array should start cold')
+    assertEqual(names.getValue()[0], 'Graham', 'cold read should compute derived array')
+    assertEqual(source.activeSubscriberCount, 0, 'cold read should not subscribe upstream')
+
+    const unsubscribe = names.subscribe(() => {})
+    assertEqual(source.activeSubscriberCount, 1, 'subscribed derived array should subscribe upstream')
+
+    unsubscribe()
+    assertEqual(source.activeSubscriberCount, 0, 'derived array should tear down upstream when cold')
+  })
+
   test('object.index.keys/size notifies only when key set changes', () => {
     const obj = signal.object({ a: 1, b: 2 })
     const keysCalls = []
@@ -977,6 +1050,92 @@ export function runSmokeTests () {
     assertEqual(keysCalls.length, 1, 'adding new key should update keys index')
     assertEqual(sizeCalls.length, 1, 'adding new key should update size index')
     assertEqual(sizeCalls[0], 3, 'size index should be updated')
+  })
+
+  test('derived object: recomputes from tracked dependencies and is readonly', () => {
+    const name = signal('Graham')
+    const age = signal(41)
+
+    const person = signal.object(track => ({
+      name: track(name),
+      age: track(age)
+    }))
+
+    assertEqual(person.getValue().name, 'Graham', 'derived object should expose initial tracked name')
+    assertEqual(person.getValue().age, 41, 'derived object should expose initial tracked age')
+    assertEqual(person.setValue, undefined, 'derived object should not expose setValue')
+    assertEqual(person.mutate, undefined, 'derived object should not expose mutate')
+
+    const calls = []
+    const unsubscribe = person.subscribe(change => {
+      if (change.kind === 'init') return
+      calls.push(change.nextValue)
+    })
+
+    name.setValue('Ada')
+
+    assertEqual(calls.length, 1, 'derived object should notify when a dependency changes')
+    assertEqual(calls[0].name, 'Ada', 'derived object should recompute changed name')
+    assertEqual(calls[0].age, 41, 'derived object should preserve other computed fields')
+
+    unsubscribe()
+  })
+
+  test('derived object: index keys and size derive from computed value', () => {
+    const includeAge = signal(false)
+    const name = signal('Graham')
+    const age = signal(41)
+
+    const person = signal.object(track => {
+      const out = { name: track(name) }
+      if (track(includeAge)) out.age = track(age)
+      return out
+    })
+
+    const keysCalls = []
+    const sizeCalls = []
+
+    person.index.keys.subscribe(change => {
+      if (change.kind === 'init') return
+      keysCalls.push(change.nextValue)
+    })
+
+    person.index.size.subscribe(change => {
+      if (change.kind === 'init') return
+      sizeCalls.push(change.nextValue)
+    })
+
+    name.setValue('Ada')
+    assertEqual(keysCalls.length, 0, 'derived object key index should not notify when keys are unchanged')
+    assertEqual(sizeCalls.length, 0, 'derived object size index should not notify when keys are unchanged')
+
+    includeAge.setValue(true)
+    assertEqual(keysCalls.length, 1, 'derived object key index should notify when keys change')
+    assertEqual(keysCalls[0].length, 2, 'derived object key index should include added key')
+    assertEqual(keysCalls[0][1], 'age', 'derived object key index should preserve key order')
+    assertEqual(sizeCalls.length, 1, 'derived object size index should notify when size changes')
+    assertEqual(sizeCalls[0], 2, 'derived object size index should update')
+  })
+
+  test('derived object: validates computed value', () => {
+    const bad = signal.object(() => null)
+
+    assertThrows(() => bad.getValue(), /expects value to be an object/, 'derived object should reject non-object computed values')
+  })
+
+  test('derived object: cold reads do not hold upstream subscriptions', () => {
+    const source = createSpySignal('Graham')
+    const person = signal.object(track => ({ name: track(source) }))
+
+    assertEqual(source.activeSubscriberCount, 0, 'derived object should start cold')
+    assertEqual(person.getValue().name, 'Graham', 'cold read should compute derived object')
+    assertEqual(source.activeSubscriberCount, 0, 'cold read should not subscribe upstream')
+
+    const unsubscribe = person.subscribe(() => {})
+    assertEqual(source.activeSubscriberCount, 1, 'subscribed derived object should subscribe upstream')
+
+    unsubscribe()
+    assertEqual(source.activeSubscriberCount, 0, 'derived object should tear down upstream when cold')
   })
 
   test('map.index.keys/size notifies only when keys change', () => {
@@ -1004,6 +1163,137 @@ export function runSmokeTests () {
     assertEqual(sizeCalls[0], 2, 'size index should be updated')
   })
 
+  test('derived map: recomputes from tracked dependencies and is readonly', () => {
+    const name = signal('Graham')
+    const age = signal(41)
+
+    const person = signal.map(track => [
+      ['name', track(name)],
+      ['age', track(age)]
+    ])
+
+    assertEqual(person.get('name'), 'Graham', 'derived map should expose initial name value')
+    assertEqual(person.get('age'), 41, 'derived map should expose initial age value')
+    assertEqual(person.size, 2, 'derived map should expose computed size')
+    assertEqual(person.setValue, undefined, 'derived map should not expose setValue')
+    assertEqual(person.mutate, undefined, 'derived map should not expose mutate')
+
+    const calls = []
+    const unsubscribe = person.subscribe(change => {
+      if (change.kind === 'init') return
+      calls.push(change.nextValue)
+    })
+
+    name.setValue('Ada')
+
+    assertEqual(calls.length, 1, 'derived map should notify when a dependency changes')
+    assertEqual(calls[0].get('name'), 'Ada', 'derived map should recompute changed value')
+    assertEqual(calls[0].get('age'), 41, 'derived map should preserve other computed entries')
+
+    unsubscribe()
+  })
+
+  test('derived map: index keys and size derive from computed value', () => {
+    const includeAge = signal(false)
+    const name = signal('Graham')
+    const age = signal(41)
+
+    const person = signal.map(track => {
+      const out = [['name', track(name)]]
+      if (track(includeAge)) out.push(['age', track(age)])
+      return out
+    })
+
+    const keysCalls = []
+    const sizeCalls = []
+
+    person.index.keys.subscribe(change => {
+      if (change.kind === 'init') return
+      keysCalls.push(change.nextValue)
+    })
+
+    person.index.size.subscribe(change => {
+      if (change.kind === 'init') return
+      sizeCalls.push(change.nextValue)
+    })
+
+    name.setValue('Ada')
+    assertEqual(keysCalls.length, 0, 'derived map key index should not notify when keys are unchanged')
+    assertEqual(sizeCalls.length, 0, 'derived map size index should not notify when size is unchanged')
+
+    includeAge.setValue(true)
+    assertEqual(keysCalls.length, 1, 'derived map key index should notify when keys change')
+    assertEqual(keysCalls[0][1], 'age', 'derived map key index should preserve key order')
+    assertEqual(sizeCalls.length, 1, 'derived map size index should notify when size changes')
+    assertEqual(sizeCalls[0], 2, 'derived map size index should update')
+  })
+
+  test('derived map: key(k) is stable and notifies only on relevant changes', () => {
+    const name = signal('Graham')
+    const includeAge = signal(false)
+    const age = signal(41)
+
+    const person = signal.map(track => {
+      const out = [['name', track(name)]]
+      if (track(includeAge)) out.push(['age', track(age)])
+      return out
+    })
+
+    const nameKeyCalls = []
+    const ageKeyCalls = []
+
+    const nameKey = person.key('name')
+    const ageKeyA = person.key('age')
+    const ageKeyB = person.key('age')
+
+    assert(ageKeyA === ageKeyB, 'derived map key(k) should return the same signal instance')
+
+    nameKey.subscribe(change => {
+      if (change.kind === 'init') return
+      nameKeyCalls.push(change.nextValue)
+    })
+
+    ageKeyA.subscribe(change => {
+      if (change.kind === 'init') return
+      ageKeyCalls.push(change.nextValue)
+    })
+
+    name.setValue('Ada')
+    assertEqual(nameKeyCalls.length, 1, 'derived map key(name) should notify when name changes')
+    assertEqual(nameKeyCalls[0].value, 'Ada', 'derived map key(name) should expose changed value')
+    assertEqual(ageKeyCalls.length, 0, 'derived map key(age) should not notify when unrelated key changes')
+
+    includeAge.setValue(true)
+    assertEqual(ageKeyCalls.length, 1, 'derived map key(age) should notify when age is added')
+    assertEqual(ageKeyCalls[0].present, true, 'derived map key(age) should become present')
+    assertEqual(ageKeyCalls[0].value, 41, 'derived map key(age) should expose value')
+
+    age.setValue(42)
+    assertEqual(ageKeyCalls.length, 2, 'derived map key(age) should notify when age value changes')
+    assertEqual(ageKeyCalls[1].value, 42, 'derived map key(age) should update value')
+  })
+
+  test('derived map: validates computed value', () => {
+    const bad = signal.map(() => null)
+
+    assertThrows(() => bad.getValue(), /Map signal expects a Map or iterable/, 'derived map should reject non-iterable computed values')
+  })
+
+  test('derived map: cold reads do not hold upstream subscriptions', () => {
+    const source = createSpySignal('Graham')
+    const person = signal.map(track => [['name', track(source)]])
+
+    assertEqual(source.activeSubscriberCount, 0, 'derived map should start cold')
+    assertEqual(person.get('name'), 'Graham', 'cold read should compute derived map')
+    assertEqual(source.activeSubscriberCount, 0, 'cold read should not subscribe upstream')
+
+    const unsubscribe = person.subscribe(() => {})
+    assertEqual(source.activeSubscriberCount, 1, 'subscribed derived map should subscribe upstream')
+
+    unsubscribe()
+    assertEqual(source.activeSubscriberCount, 0, 'derived map should tear down upstream when cold')
+  })
+
   test('set.index.values/size notifies on membership changes', () => {
     const s = signal.set(['a'])
     const valuesCalls = []
@@ -1028,6 +1318,113 @@ export function runSmokeTests () {
     assertEqual(valuesCalls.length, 2, 'delete should update values index')
     assertEqual(sizeCalls.length, 2, 'delete should update size index')
     assertEqual(sizeCalls[1], 1, 'size index should be updated')
+  })
+
+  test('derived set: recomputes from tracked dependencies and is readonly', () => {
+    const first = signal('Graham')
+    const second = signal('Ada')
+
+    const names = signal.set(track => [track(first), track(second)])
+
+    assertEqual(names.has('Graham'), true, 'derived set should expose initial first value')
+    assertEqual(names.has('Ada'), true, 'derived set should expose initial second value')
+    assertEqual(names.size, 2, 'derived set should expose computed size')
+    assertEqual(names.setValue, undefined, 'derived set should not expose setValue')
+    assertEqual(names.mutate, undefined, 'derived set should not expose mutate')
+
+    const calls = []
+    const unsubscribe = names.subscribe(change => {
+      if (change.kind === 'init') return
+      calls.push(change.nextValue)
+    })
+
+    first.setValue('Grace')
+
+    assertEqual(calls.length, 1, 'derived set should notify when a dependency changes')
+    assertEqual(calls[0].has('Grace'), true, 'derived set should recompute changed value')
+    assertEqual(calls[0].has('Graham'), false, 'derived set should remove old computed value')
+
+    unsubscribe()
+  })
+
+  test('derived set: index values and size derive from computed value', () => {
+    const includeSecond = signal(false)
+    const first = signal('Graham')
+    const second = signal('Ada')
+
+    const names = signal.set(track => {
+      const out = [track(first)]
+      if (track(includeSecond)) out.push(track(second))
+      return out
+    })
+
+    const valuesCalls = []
+    const sizeCalls = []
+
+    names.index.values.subscribe(change => {
+      if (change.kind === 'init') return
+      valuesCalls.push(change.nextValue)
+    })
+
+    names.index.size.subscribe(change => {
+      if (change.kind === 'init') return
+      sizeCalls.push(change.nextValue)
+    })
+
+    first.setValue('Grace')
+    assertEqual(valuesCalls.length, 1, 'derived set values index should notify when values change')
+    assertEqual(valuesCalls[0][0], 'Grace', 'derived set values index should preserve order')
+    assertEqual(sizeCalls.length, 0, 'derived set size index should not notify when size is unchanged')
+
+    includeSecond.setValue(true)
+    assertEqual(valuesCalls.length, 2, 'derived set values index should notify when values are added')
+    assertEqual(valuesCalls[1][1], 'Ada', 'derived set values index should include added value')
+    assertEqual(sizeCalls.length, 1, 'derived set size index should notify when size changes')
+    assertEqual(sizeCalls[0], 2, 'derived set size index should update')
+  })
+
+  test('derived set: value(v) is stable and notifies only on membership changes', () => {
+    const includeSecond = signal(false)
+    const names = signal.set(track => track(includeSecond) ? ['Graham', 'Ada'] : ['Graham'])
+
+    const v1a = names.value('Ada')
+    const v1b = names.value('Ada')
+    assert(v1a === v1b, 'derived set value(v) should return the same signal instance')
+
+    const calls = []
+    v1a.subscribe(change => {
+      if (change.kind === 'init') return
+      calls.push(change.nextValue)
+    })
+
+    includeSecond.setValue(true)
+    assertEqual(calls.length, 1, 'derived set value(v) should notify when membership changes')
+    assertEqual(calls[0].present, true, 'derived set value(v) should become present')
+
+    includeSecond.setValue(false)
+    assertEqual(calls.length, 2, 'derived set value(v) should notify when membership changes again')
+    assertEqual(calls[1].present, false, 'derived set value(v) should become absent')
+  })
+
+  test('derived set: validates computed value', () => {
+    const bad = signal.set(() => null)
+
+    assertThrows(() => bad.getValue(), /Set signal expects a Set or iterable/, 'derived set should reject non-iterable computed values')
+  })
+
+  test('derived set: cold reads do not hold upstream subscriptions', () => {
+    const source = createSpySignal('Graham')
+    const names = signal.set(track => [track(source)])
+
+    assertEqual(source.activeSubscriberCount, 0, 'derived set should start cold')
+    assertEqual(names.has('Graham'), true, 'cold read should compute derived set')
+    assertEqual(source.activeSubscriberCount, 0, 'cold read should not subscribe upstream')
+
+    const unsubscribe = names.subscribe(() => {})
+    assertEqual(source.activeSubscriberCount, 1, 'subscribed derived set should subscribe upstream')
+
+    unsubscribe()
+    assertEqual(source.activeSubscriberCount, 0, 'derived set should tear down upstream when cold')
   })
 
   test('map: setValue notifies when iteration order changes', () => {

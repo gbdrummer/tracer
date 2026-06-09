@@ -1,12 +1,43 @@
 import SubscriptionManager from '../core/SubscriptionManager.js'
 import { createUpdateChange } from '../core/change.js'
+import createDerivedSignal from '../core/createDerivedSignal.js'
 import createIndexSignal from './createIndexSignal.js'
 import { assertNotInDerivedCompute, composeSignal } from '../core/utilities.js'
 
-export default function createArraySignal (initialValue) {
-  if (!Array.isArray(initialValue)) throw new TypeError('createArraySignal(initialValue) expects initialValue to be an array')
+function freezeArrayValue (value, context) {
+  if (!Array.isArray(value)) throw new TypeError(`${context} expects value to be an array`)
+  return Object.freeze(value.slice())
+}
 
-  let value = Object.freeze(initialValue.slice())
+function createLengthSignal (source) {
+  return createDerivedSignal(track => track(source).length)
+}
+
+function createDerivedArraySignal (compute) {
+  const source = createDerivedSignal(track => freezeArrayValue(compute(track), 'Derived array signal compute(track)'))
+  let index
+
+  function getIndex () {
+    if (index) return index
+
+    index = Object.freeze({
+      length: createLengthSignal(source)
+    })
+
+    return index
+  }
+
+  return composeSignal({
+    getValue: source.getValue,
+
+    get index () { return getIndex() }
+  }, source)
+}
+
+export default function createArraySignal (initialValue) {
+  if (typeof initialValue === 'function') return createDerivedArraySignal(initialValue)
+
+  let value = freezeArrayValue(initialValue, 'createArraySignal(initialValue)')
 
   let index
   let lengthIndex

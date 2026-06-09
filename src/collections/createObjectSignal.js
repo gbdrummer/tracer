@@ -1,12 +1,40 @@
 import SubscriptionManager from '../core/SubscriptionManager.js'
 import { createUpdateChange } from '../core/change.js'
+import createDerivedSignal from '../core/createDerivedSignal.js'
 import createIndexSignal from './createIndexSignal.js'
+import { createStableSnapshotSignal } from './utilities.js'
 import { assertNotInDerivedCompute, composeSignal } from '../core/utilities.js'
 
-export default function createObjectSignal (initialValue) {
-  if (!initialValue || typeof initialValue !== 'object' || Array.isArray(initialValue)) throw new TypeError('createObjectSignal(initialValue) expects initialValue to be an object')
+function freezeObjectValue (value, context) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${context} expects value to be an object`)
+  return Object.freeze({ ...value })
+}
 
-  let value = Object.freeze({ ...initialValue })
+function createDerivedObjectSignal (compute) {
+  const source = createDerivedSignal(track => freezeObjectValue(compute(track), 'Derived object signal compute(track)'))
+  let index
+
+  function getIndex () {
+    if (index) return index
+
+    const keys = createStableSnapshotSignal(source, value => Object.keys(value))
+    const size = createDerivedSignal(track => track(keys).length)
+
+    index = Object.freeze({ keys, size })
+    return index
+  }
+
+  return composeSignal({
+    getValue: source.getValue,
+
+    get index () { return getIndex() }
+  }, source)
+}
+
+export default function createObjectSignal (initialValue) {
+  if (typeof initialValue === 'function') return createDerivedObjectSignal(initialValue)
+
+  let value = freezeObjectValue(initialValue, 'createObjectSignal(initialValue)')
 
   let index
   let keysIndex

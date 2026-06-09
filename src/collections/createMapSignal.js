@@ -1,6 +1,8 @@
 import SubscriptionManager from '../core/SubscriptionManager.js'
 import { createUpdateChange } from '../core/change.js'
+import createDerivedSignal from '../core/createDerivedSignal.js'
 import createIndexSignal from './createIndexSignal.js'
+import { createStableSnapshotSignal } from './utilities.js'
 import { assertNotInDerivedCompute, composeSignal } from '../core/utilities.js'
 
 function createMapView (mapData) {
@@ -45,8 +47,63 @@ function coerceToMap (value) {
   return new Map(value)
 }
 
+function freezeKeysSnapshot (m) {
+  return Object.freeze([...m.keys()])
+}
+
+function createDerivedMapSignal (compute) {
+  const source = createDerivedSignal(track => createMapView(coerceToMap(compute(track))))
+  const keySignals = new Map()
+  let index
+
+  function getIndex () {
+    if (index) return index
+
+    const keys = createStableSnapshotSignal(source, value => freezeKeysSnapshot(value))
+    const size = createDerivedSignal(track => track(keys).length)
+
+    index = Object.freeze({ keys, size })
+    return index
+  }
+
+  function key (k) {
+    if (keySignals.has(k)) return keySignals.get(k)
+
+    let previousEntry
+
+    const signal = createDerivedSignal(track => {
+      const map = track(source)
+      const nextEntry = Object.freeze({
+        present: map.has(k),
+        value: map.has(k) ? map.get(k) : undefined
+      })
+
+      if (previousEntry && previousEntry.present === nextEntry.present && Object.is(previousEntry.value, nextEntry.value)) return previousEntry
+
+      previousEntry = nextEntry
+      return previousEntry
+    })
+
+    keySignals.set(k, signal)
+    return signal
+  }
+
+  return composeSignal({
+    getValue: source.getValue,
+    key,
+
+    get index () { return getIndex() },
+
+    has: key => source.getValue().has(key),
+    get: key => source.getValue().get(key),
+
+    get size () { return source.getValue().size }
+  }, source)
+}
+
 export default function createMapSignal (initialValue) {
   if (arguments.length > 1) throw new TypeError('createMapSignal(initialValue) accepts only one argument')
+  if (typeof initialValue === 'function') return createDerivedMapSignal(initialValue)
 
   let mapData = (initialValue === undefined) ? new Map() : coerceToMap(initialValue)
   let valueView = createMapView(mapData)
@@ -58,10 +115,6 @@ export default function createMapSignal (initialValue) {
 
   const getValue = () => valueView
   const subscriptions = new SubscriptionManager({ getValue })
-
-  function freezeKeysSnapshot (m) {
-    return Object.freeze([...m.keys()])
-  }
 
   function getIndex () {
     if (index) return index

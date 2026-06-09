@@ -1,6 +1,8 @@
 import SubscriptionManager from '../core/SubscriptionManager.js'
 import { createUpdateChange } from '../core/change.js'
+import createDerivedSignal from '../core/createDerivedSignal.js'
 import createIndexSignal from './createIndexSignal.js'
+import { createStableSnapshotSignal } from './utilities.js'
 import { assertNotInDerivedCompute, composeSignal } from '../core/utilities.js'
 
 function createSetView (setData) {
@@ -36,8 +38,54 @@ function coerceToSet (value) {
   return new Set(value)
 }
 
+function createDerivedSetSignal (compute) {
+  const source = createDerivedSignal(track => createSetView(coerceToSet(compute(track))))
+  const valueSignals = new Map()
+  let index
+
+  function getIndex () {
+    if (index) return index
+
+    const values = createStableSnapshotSignal(source, value => freezeValuesSnapshot(value))
+    const size = createDerivedSignal(track => track(values).length)
+
+    index = Object.freeze({ values, size })
+    return index
+  }
+
+  function value (v) {
+    if (valueSignals.has(v)) return valueSignals.get(v)
+
+    let previousEntry
+
+    const signal = createDerivedSignal(track => {
+      const nextEntry = Object.freeze({ present: track(source).has(v) })
+
+      if (previousEntry && previousEntry.present === nextEntry.present) return previousEntry
+
+      previousEntry = nextEntry
+      return previousEntry
+    })
+
+    valueSignals.set(v, signal)
+    return signal
+  }
+
+  return composeSignal({
+    getValue: source.getValue,
+    value,
+
+    get index () { return getIndex() },
+
+    has: v => source.getValue().has(v),
+
+    get size () { return source.getValue().size }
+  }, source)
+}
+
 export default function createSetSignal (initialValue) {
   if (arguments.length > 1) throw new TypeError('createSetSignal(initialValue) accepts only one argument')
+  if (typeof initialValue === 'function') return createDerivedSetSignal(initialValue)
 
   let setData = (initialValue === undefined) ? new Set() : coerceToSet(initialValue)
   let valueView = createSetView(setData)
